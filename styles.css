@@ -295,13 +295,13 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; border: 1px soli
 .exit-button { right: 2%; }
 .corner-button:hover { color: var(--gold-hot); }
 
-.result-panel { position: absolute; z-index: 50; left: 50%; top: 50%; display: none; min-width: min(460px, 80vw); padding: 36px; border: 1px solid var(--gold); background: rgba(7, 5, 4, .94); box-shadow: 0 20px 80px #000; text-align: center; transform: translate(-50%, -50%); }
+.result-panel { position: absolute; z-index: 50; left: 50%; top: 17%; display: none; min-width: min(620px, 90vw); padding: 0; border: 0; background: transparent; box-shadow: none; text-align: center; pointer-events: none; transform: translateX(-50%); }
 .result-panel.is-visible { display: block; animation: panel-in .3s ease-out; }
-@keyframes panel-in { from { opacity: 0; transform: translate(-50%, -45%); } }
-.result-panel p { margin: 0 0 6px; color: #9e8a6d; font-size: .66rem; letter-spacing: .24em; text-transform: uppercase; }
-.result-panel h2 { margin: 0 0 28px; color: var(--gold-hot); font-family: var(--pixel-font); font-size: clamp(1.7rem, 4vw, 3.1rem); font-weight: 400; line-height: 1.1; letter-spacing: .08em; text-transform: uppercase; }
+@keyframes panel-in { from { opacity: 0; transform: translate(-50%, -10px); } }
+.result-panel p { margin: 0 0 4px; color: #d0b98c; font-size: .66rem; letter-spacing: .24em; text-shadow: 0 2px 3px #000, 0 0 8px #000; text-transform: uppercase; }
+.result-panel h2 { margin: 0 0 14px; color: var(--gold-hot); font-family: var(--pixel-font); font-size: clamp(1.7rem, 4vw, 3.1rem); font-weight: 400; line-height: 1.1; letter-spacing: .08em; text-shadow: 0 3px 2px #000, 0 0 12px #000; text-transform: uppercase; }
 .result-actions { display: flex; justify-content: center; gap: 10px; }
-.result-actions button { padding: 11px 24px; border: 1px solid #745c32; background: #18120c; color: #e7d3ac; cursor: pointer; font-size: .7rem; letter-spacing: .14em; text-transform: uppercase; }
+.result-actions button { padding: 9px 20px; border: 1px solid #745c32; background: rgba(24, 18, 12, .92); color: #e7d3ac; cursor: pointer; font-size: .7rem; letter-spacing: .14em; pointer-events: auto; text-transform: uppercase; }
 .result-actions button:hover { border-color: var(--gold); color: var(--gold-hot); }
 
 .moves-dialog { width: min(650px, 90vw); padding: 0; border: 1px solid #785d2e; background: #0b0907; color: #e4d3ae; box-shadow: 0 20px 80px #000; }

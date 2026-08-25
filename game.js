@@ -138,7 +138,7 @@ const MOVES = {
     type: "cinematic",
     endRatio: 0.42,
     files: sidePair(`${ASSET}/fatality/Fatality L_pixelated.mp4`, `${ASSET}/fatality/Fatality R_pixelated.mp4`),
-    audioCues: [{ at: 0.24, sound: "fatality" }],
+    audioCues: [{ at: 0.24, sound: "fatality", event: "fatalityCrush" }],
   },
 
   rightHookReaction: {
@@ -230,6 +230,13 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+const moveStartRatio = (spec) => spec.startRatio ?? (
+  spec.type === "attack" ? Math.max(0, spec.active[0] - 0.1)
+    : spec.type === "reaction" ? 0.14
+      : spec.type === "block" ? 0.06
+        : spec.type === "crouch" ? 0.04
+          : 0
+);
 
 class VideoAssetCache {
   constructor(sources) {
@@ -381,9 +388,26 @@ class Fighter {
     }
   }
 
+  prepare(moveNames) {
+    for (const name of moveNames) {
+      const spec = MOVES[name];
+      if (!spec) continue;
+      const video = this.getVideo(this.resolveFile(spec).source);
+      if (video === this.currentVideo) continue;
+      const seekToStart = () => {
+        if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+        const start = video.duration * moveStartRatio(spec);
+        if (Math.abs(video.currentTime - start) > 0.025) video.currentTime = start;
+      };
+      if (video.readyState >= 1) seekToStart();
+      else video.addEventListener("loadedmetadata", seekToStart, { once: true });
+      if (video.readyState < 2) video.load();
+    }
+  }
+
   getVideo(source) {
     if (this.videos.has(source)) return this.videos.get(source);
-    while (this.videos.size >= 8) {
+    while (this.videos.size >= 10) {
       const disposable = [...this.videos.entries()].find(([, candidate]) => candidate !== this.currentVideo);
       if (!disposable) break;
       const [oldSource, oldVideo] = disposable;
@@ -429,6 +453,7 @@ class Fighter {
     video.pause();
     video.loop = Boolean(spec.loop) && !options.reverse;
     const playbackRate = options.playbackRate ?? spec.playbackRate ?? PLAYBACK_SPEED[spec.type] ?? 1.35;
+    const startRatio = options.startRatio ?? moveStartRatio(spec);
     video.playbackRate = playbackRate;
 
     const playbackToken = Symbol(name);
@@ -441,12 +466,15 @@ class Fighter {
       didHit: false,
       playedAudioCues: new Set(),
       playbackRate,
+      startRatio,
       reverse: Boolean(options.reverse),
       startedAt: performance.now(),
       playbackToken,
       retriedLoad: false,
       ready: false,
       startRequested: false,
+      holdAtStart: Boolean(options.holdAtStart),
+      resumeRequested: !options.holdAtStart,
     };
     this.manualReverse = Boolean(options.reverse);
     this.lastRenderedTime = -1;
@@ -455,10 +483,18 @@ class Fighter {
       const state = this.current;
       if (state?.playbackToken !== playbackToken || this.currentVideo !== video || state.startRequested) return;
       state.startRequested = true;
-      const start = options.reverse && Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.04) : 0;
+      const start = options.reverse && Number.isFinite(video.duration)
+        ? Math.max(0, video.duration - 0.04)
+        : Number.isFinite(video.duration) ? video.duration * startRatio : 0;
       const startVideo = () => {
         const activeState = this.current;
         if (activeState?.playbackToken !== playbackToken || this.currentVideo !== video) return;
+        if (activeState.holdAtStart && !activeState.resumeRequested) {
+          video.pause();
+          activeState.ready = true;
+          this.render();
+          return;
+        }
         if (options.reverse) {
           activeState.ready = true;
           return;
@@ -506,6 +542,22 @@ class Fighter {
     return true;
   }
 
+  releaseHeldAnimation() {
+    const state = this.current;
+    const video = this.currentVideo;
+    if (!state || !video || !state.holdAtStart) return false;
+    state.holdAtStart = false;
+    state.resumeRequested = true;
+    if (!state.ready) return true;
+    state.ready = false;
+    video.play().then(() => {
+      if (this.current === state) state.ready = true;
+    }).catch(() => {
+      if (this.current === state) state.ready = false;
+    });
+    return true;
+  }
+
   playIdle(force = false) {
     if (!force && this.current?.name === "idle" && this.current.facing === this.facing) return;
     this.play("idle");
@@ -518,7 +570,9 @@ class Fighter {
   attack(name, force = false) {
     if (this.game.phase !== "active" || (!force && !this.canAct())) return false;
     this.game.sound.swing();
-    return this.play(name);
+    const started = this.play(name);
+    if (started) queueMicrotask(() => this.game.prepareReaction(this, MOVES[name]));
+    return started;
   }
 
   react(move, blocked = false) {
@@ -578,6 +632,11 @@ class Fighter {
       return;
     }
 
+    if (state.holdAtStart && !state.resumeRequested) {
+      this.render();
+      return;
+    }
+
     if (state.reverse && Number.isFinite(video.duration) && video.readyState >= 2) {
       const next = video.currentTime - deltaSeconds * state.playbackRate;
       video.currentTime = next <= 0 ? Math.max(0, video.duration - 0.05) : next;
@@ -591,6 +650,7 @@ class Fighter {
         if (normalized >= cue.at && !state.playedAudioCues.has(index)) {
           state.playedAudioCues.add(index);
           this.game.sound.playSample(cue.sound, cue.volume);
+          if (cue.event) this.game.handleAnimationCue(this, cue.event);
         }
       });
     }
@@ -688,6 +748,8 @@ class CostumeCombat {
     this.cpuMoveUntil = 0;
     this.finishWinner = null;
     this.finishTimer = null;
+    this.fatalityWinner = null;
+    this.fatalityVictim = null;
     this.isStarting = false;
     this.spearElement = $("#spear");
 
@@ -777,10 +839,8 @@ class CostumeCombat {
       return;
     }
     window.clearTimeout(this.pendingPunch);
-    this.pendingPunch = window.setTimeout(() => {
-      if (this.keys.has("a") && this.keys.has("d")) this.startPlayerBlock();
-      else this.handlePunch("a");
-    }, 72);
+    this.pendingPunch = null;
+    this.handlePunch("a");
   }
 
   startPlayerBlock() {
@@ -863,6 +923,8 @@ class CostumeCombat {
     this.phase = "menu";
     this.keys.clear();
     window.clearTimeout(this.finishTimer);
+    this.fatalityWinner = null;
+    this.fatalityVictim = null;
     this.spearElement.classList.remove("is-active");
     $("#result-panel").classList.remove("is-visible");
     $("#result-panel").setAttribute("aria-hidden", "true");
@@ -884,6 +946,8 @@ class CostumeCombat {
     this.flowToken += 1;
     const token = this.flowToken;
     this.phase = "loading";
+    this.fatalityWinner = null;
+    this.fatalityVictim = null;
     await this.media.preloadAll();
     if (trigger) {
       trigger.disabled = false;
@@ -925,11 +989,26 @@ class CostumeCombat {
     if (token !== this.flowToken) return;
     this.player.playIdle(true);
     this.cpu.playIdle(true);
+    this.primeCombatVideos();
     await this.announce("Fight!", "", "", 640, token);
     if (token !== this.flowToken) return;
     this.phase = "active";
     this.lastFrame = performance.now();
     this.cpuNextThink = 0;
+  }
+
+  primeCombatVideos() {
+    const commonMoves = [
+      "rightHook", "kick", "walk", "walkReverse", "block", "crouch",
+      "rightHookReaction", "kickReaction",
+    ];
+    this.player.prepare(commonMoves);
+    this.cpu.prepare(commonMoves);
+  }
+
+  prepareReaction(attacker, move) {
+    const defender = attacker === this.player ? this.cpu : this.player;
+    if (move?.reaction) defender.prepare([move.reaction]);
   }
 
   async announce(text, kicker = "", className = "", hold = 900, token = this.flowToken) {
@@ -1152,12 +1231,14 @@ class CostumeCombat {
     const token = this.flowToken;
     this.phase = "fatality";
     this.finishWinner = null;
+    this.fatalityWinner = winner;
+    this.fatalityVictim = loser;
     const midpoint = clamp((winner.x + loser.x) / 2, 32, 68);
     winner.setPosition(midpoint + (winner.x < loser.x ? -7 : 7));
     loser.setPosition(midpoint + (winner.x < loser.x ? 7 : -7));
     this.updateFacing();
     winner.play("fatality");
-    loser.play("fatalityReaction");
+    loser.play("fatalityReaction", { holdAtStart: true, startRatio: 0 });
     await wait(4200);
     if (token !== this.flowToken) return;
     await this.announce("Fatality", "", "fatality", 1550, token);
@@ -1165,6 +1246,11 @@ class CostumeCombat {
     await this.announce("Scorpion Wins", winner === this.player ? "P1 victorious" : "CPU victorious", "", 1200, token);
     if (token !== this.flowToken) return;
     this.showResult(winner);
+  }
+
+  handleAnimationCue(fighter, event) {
+    if (event !== "fatalityCrush" || this.phase !== "fatality" || fighter !== this.fatalityWinner) return;
+    this.fatalityVictim?.releaseHeldAnimation();
   }
 
   showResult(winner) {
