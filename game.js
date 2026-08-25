@@ -1,4 +1,5 @@
 const ASSET = "animations";
+const AUDIO = "audio";
 
 const sidePair = (left, right) => ({ L: left, R: right });
 const mirrored = (source, mirror = true) => ({ source, mirror });
@@ -100,6 +101,7 @@ const MOVES = {
     endRatio: 0.88,
     files: sidePair(`${ASSET}/specials/Side Slash L_pixelated.mp4`, `${ASSET}/specials/Side Slash R_pixelated.mp4`),
     reaction: "sideSlashReaction",
+    hitSounds: ["slash2"],
   },
   slash: {
     type: "attack",
@@ -110,6 +112,10 @@ const MOVES = {
     cancelOnForwardRelease: true,
     files: sidePair(`${ASSET}/specials/Left Slash_pixelated.mp4`, `${ASSET}/specials/Right Slash_pixelated.mp4`),
     reaction: "sideSlashReaction",
+    audioCues: [
+      { at: 0.38, sound: "slash1" },
+      { at: 0.62, sound: "slash2" },
+    ],
   },
   spear: {
     type: "attack",
@@ -120,11 +126,14 @@ const MOVES = {
     projectile: true,
     files: sidePair(`${ASSET}/specials/Spear L_pixelated.mp4`, `${ASSET}/specials/Spear R_pixelated.mp4`),
     reaction: "spearReaction",
+    hitSounds: ["slash1"],
+    pullVoice: "getOverHere",
   },
   fatality: {
     type: "cinematic",
     endRatio: 0.42,
     files: sidePair(`${ASSET}/fatality/Fatality L_pixelated.mp4`, `${ASSET}/fatality/Fatality R_pixelated.mp4`),
+    audioCues: [{ at: 0.24, sound: "fatality" }],
   },
 
   rightHookReaction: {
@@ -192,7 +201,8 @@ const DIFFICULTY = {
   "very-hard": { think: 150, aggression: 0.9, block: 0.38, special: 0.3, damage: 1.18, speed: 14 },
 };
 
-const SOURCE_CROP = { x: 500, y: 0, width: 920, height: 1080 };
+// GitHub Pages build clips are already cropped to the performance area.
+const SOURCE_CROP = { x: 0, y: 0, width: 460, height: 540 };
 const DOUBLE_TAP_MS = 285;
 const COMMAND_WINDOW_MS = 520;
 
@@ -205,6 +215,14 @@ class SoundEngine {
   constructor() {
     this.context = null;
     this.enabled = true;
+    this.sampleSources = {
+      fatality: `${AUDIO}/fatality audio.mp3`,
+      getOverHere: `${AUDIO}/get over here.mp3`,
+      slash1: `${AUDIO}/slash1.mp3`,
+      slash2: `${AUDIO}/slash2.mp3`,
+    };
+    this.sampleTemplates = new Map();
+    this.activeSamples = new Set();
   }
 
   ensure() {
@@ -236,6 +254,48 @@ class SoundEngine {
     if (!blocked) window.setTimeout(() => this.tone(52, 0.11, "square", 0.035, -15), 25);
   }
   announce() { this.tone(72, 0.3, "sawtooth", 0.045, -30); }
+
+  preloadSamples() {
+    for (const name of Object.keys(this.sampleSources)) this.getSampleTemplate(name);
+  }
+
+  getSampleTemplate(name) {
+    if (this.sampleTemplates.has(name)) return this.sampleTemplates.get(name);
+    const source = this.sampleSources[name];
+    if (!source) return null;
+    const audio = new Audio(source);
+    audio.preload = "auto";
+    this.sampleTemplates.set(name, audio);
+    return audio;
+  }
+
+  playSample(name, volume = 0.82) {
+    if (!this.enabled) return null;
+    this.ensure();
+    const template = this.getSampleTemplate(name);
+    if (!template) return null;
+    const audio = template.cloneNode(true);
+    audio.volume = clamp(volume, 0, 1);
+    this.activeSamples.add(audio);
+    const release = () => this.activeSamples.delete(audio);
+    audio.addEventListener("ended", release, { once: true });
+    audio.addEventListener("error", release, { once: true });
+    audio.play().catch(release);
+    return audio;
+  }
+
+  setEnabled(enabled) {
+    this.enabled = enabled;
+    if (enabled) {
+      this.ensure();
+      return;
+    }
+    for (const audio of this.activeSamples) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    this.activeSamples.clear();
+  }
 }
 
 class Fighter {
@@ -311,6 +371,7 @@ class Fighter {
       facing,
       mirror: Boolean(file.mirror),
       didHit: false,
+      playedAudioCues: new Set(),
       reverse: Boolean(options.reverse),
       startedAt: performance.now(),
     };
@@ -393,6 +454,15 @@ class Fighter {
 
     const duration = video.duration;
     const normalized = Number.isFinite(duration) && duration > 0 ? video.currentTime / duration : 0;
+
+    if (state.spec.audioCues) {
+      state.spec.audioCues.forEach((cue, index) => {
+        if (normalized >= cue.at && !state.playedAudioCues.has(index)) {
+          state.playedAudioCues.add(index);
+          this.game.sound.playSample(cue.sound, cue.volume);
+        }
+      });
+    }
 
     if (state.spec.type === "attack") {
       const [activeStart, activeEnd] = state.spec.active;
@@ -524,7 +594,7 @@ class CostumeCombat {
     $("#menu-button").addEventListener("click", () => this.returnToMenu());
     $("#exit-button").addEventListener("click", () => this.returnToMenu());
     $("#sound-button").addEventListener("click", (event) => {
-      this.sound.enabled = !this.sound.enabled;
+      this.sound.setEnabled(!this.sound.enabled);
       event.currentTarget.textContent = `Sound: ${this.sound.enabled ? "On" : "Off"}`;
       if (this.sound.enabled) this.sound.ui();
     });
@@ -669,6 +739,7 @@ class CostumeCombat {
 
   async startMatch() {
     this.sound.ensure();
+    this.sound.preloadSamples();
     this.sound.ui();
     this.flowToken += 1;
     const token = this.flowToken;
@@ -823,9 +894,20 @@ class CostumeCombat {
     if (!state.spec.projectile && distance > state.spec.range) return;
     state.didHit = true;
     const connected = target.takeDamage(state.spec, attacker);
+    if (connected && state.spec.hitSounds) {
+      for (const sound of state.spec.hitSounds) this.sound.playSample(sound);
+    }
     if (state.spec.projectile && connected) {
       const towardAttacker = attacker.x < target.x ? -1 : 1;
       target.setPosition(target.x + towardAttacker * 3.2);
+      if (state.spec.pullVoice) {
+        const token = this.flowToken;
+        window.setTimeout(() => {
+          if (token === this.flowToken && ["active", "round-over"].includes(this.phase)) {
+            this.sound.playSample(state.spec.pullVoice, 0.95);
+          }
+        }, 180);
+      }
     }
     if (target.health <= 0) this.endRound(attacker, target);
   }
