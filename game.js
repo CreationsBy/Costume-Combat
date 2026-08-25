@@ -15,6 +15,11 @@ const MOVES = {
     loop: true,
     files: sidePair(`${ASSET}/walking/Walking Left_pixelated.mp4`, `${ASSET}/walking/Walking Right_pixelated.mp4`),
   },
+  walkReverse: {
+    type: "movement",
+    loop: true,
+    files: sidePair(`${ASSET}/walking/Walking Left Reverse_pixelated.mp4`, `${ASSET}/walking/Walking Right Reverse_pixelated.mp4`),
+  },
   intro: {
     type: "cinematic",
     files: sidePair(`${ASSET}/intros/Intro Left_pixelated.mp4`, `${ASSET}/intros/Intro Right_pixelated.mp4`),
@@ -194,6 +199,12 @@ const MOVES = {
   },
 };
 
+const VIDEO_SOURCES = [...new Set(
+  Object.values(MOVES).flatMap((move) => Object.values(move.files).map((file) => (
+    typeof file === "string" ? file : file.source
+  ))),
+)];
+
 const DIFFICULTY = {
   easy: { think: 620, aggression: 0.48, block: 0.07, special: 0.09, damage: 0.72, speed: 8.5 },
   medium: { think: 410, aggression: 0.62, block: 0.15, special: 0.14, damage: 0.88, speed: 10.5 },
@@ -219,6 +230,40 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+class VideoAssetCache {
+  constructor(sources) {
+    this.sources = sources;
+    this.objectUrls = new Map();
+    this.failures = new Set();
+    this.preloadPromise = null;
+  }
+
+  resolve(source) {
+    return this.objectUrls.get(source) || source;
+  }
+
+  preloadAll() {
+    if (this.preloadPromise) return this.preloadPromise;
+    let nextIndex = 0;
+    const loadNext = async () => {
+      while (nextIndex < this.sources.length) {
+        const source = this.sources[nextIndex++];
+        try {
+          const response = await fetch(source, { cache: "force-cache" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const blob = await response.blob();
+          this.objectUrls.set(source, URL.createObjectURL(blob));
+        } catch {
+          // Direct URLs remain a safe fallback if prefetching is unavailable.
+          this.failures.add(source);
+        }
+      }
+    };
+    this.preloadPromise = Promise.all(Array.from({ length: 5 }, () => loadNext()));
+    return this.preloadPromise;
+  }
+}
 
 class SoundEngine {
   constructor() {
@@ -338,12 +383,29 @@ class Fighter {
 
   getVideo(source) {
     if (this.videos.has(source)) return this.videos.get(source);
+    while (this.videos.size >= 8) {
+      const disposable = [...this.videos.entries()].find(([, candidate]) => candidate !== this.currentVideo);
+      if (!disposable) break;
+      const [oldSource, oldVideo] = disposable;
+      oldVideo.pause();
+      oldVideo.removeAttribute("src");
+      oldVideo.load();
+      this.videos.delete(oldSource);
+    }
     const video = document.createElement("video");
-    video.src = source;
+    const cachedSource = this.game.media.resolve(source);
+    video.src = cachedSource;
     video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
     video.disablePictureInPicture = true;
+    video.addEventListener("error", () => {
+      const directSource = new URL(source, document.baseURI).href;
+      if (video.src !== directSource) {
+        video.src = source;
+        video.load();
+      }
+    }, { once: true });
     this.videos.set(source, video);
     return video;
   }
@@ -369,14 +431,7 @@ class Fighter {
     const playbackRate = options.playbackRate ?? spec.playbackRate ?? PLAYBACK_SPEED[spec.type] ?? 1.35;
     video.playbackRate = playbackRate;
 
-    const beginPlayback = () => {
-      const start = options.reverse && Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.04) : 0;
-      try { video.currentTime = start; } catch { /* metadata will settle on the first frame */ }
-      if (!options.reverse) video.play().catch(() => {});
-    };
-    if (video.readyState >= 1) beginPlayback();
-    else video.addEventListener("loadedmetadata", beginPlayback, { once: true });
-
+    const playbackToken = Symbol(name);
     this.currentVideo = video;
     this.current = {
       name,
@@ -388,9 +443,66 @@ class Fighter {
       playbackRate,
       reverse: Boolean(options.reverse),
       startedAt: performance.now(),
+      playbackToken,
+      retriedLoad: false,
+      ready: false,
+      startRequested: false,
     };
     this.manualReverse = Boolean(options.reverse);
     this.lastRenderedTime = -1;
+
+    const beginPlayback = () => {
+      const state = this.current;
+      if (state?.playbackToken !== playbackToken || this.currentVideo !== video || state.startRequested) return;
+      state.startRequested = true;
+      const start = options.reverse && Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.04) : 0;
+      const startVideo = () => {
+        const activeState = this.current;
+        if (activeState?.playbackToken !== playbackToken || this.currentVideo !== video) return;
+        if (options.reverse) {
+          activeState.ready = true;
+          return;
+        }
+        video.play().then(() => {
+          if (this.current?.playbackToken === playbackToken) this.current.ready = true;
+        }).catch(() => {
+          if (this.current?.playbackToken === playbackToken) {
+            this.current.ready = false;
+            this.current.startRequested = false;
+          }
+        });
+      };
+      try {
+        if (Math.abs(video.currentTime - start) > 0.025 || video.ended) {
+          video.addEventListener("seeked", startVideo, { once: true });
+          video.currentTime = start;
+        } else {
+          startVideo();
+        }
+      } catch {
+        startVideo();
+      }
+    };
+    if (video.readyState >= 2) beginPlayback();
+    else {
+      video.addEventListener("canplay", beginPlayback, { once: true });
+      video.load();
+    }
+
+    window.setTimeout(() => {
+      const state = this.current;
+      if (state?.playbackToken !== playbackToken || state.ready) return;
+      state.retriedLoad = true;
+      state.startRequested = false;
+      video.addEventListener("canplay", beginPlayback, { once: true });
+      video.load();
+    }, 850);
+
+    window.setTimeout(() => {
+      const state = this.current;
+      if (state?.playbackToken !== playbackToken || state.ready || name === "idle") return;
+      this.playIdle(true);
+    }, 2400);
     return true;
   }
 
@@ -460,6 +572,11 @@ class Fighter {
     const video = this.currentVideo;
     const state = this.current;
     if (!video || !state) return;
+
+    if (!state.ready) {
+      this.render();
+      return;
+    }
 
     if (state.reverse && Number.isFinite(video.duration) && video.readyState >= 2) {
       const next = video.currentTime - deltaSeconds * state.playbackRate;
@@ -548,6 +665,7 @@ class CostumeCombat {
   constructor() {
     this.arena = $("#arena");
     this.gameScreen = $("#game-screen");
+    this.media = new VideoAssetCache(VIDEO_SOURCES);
     this.player = new Fighter(this, "player", $("#player-fighter"));
     this.cpu = new Fighter(this, "cpu", $("#cpu-fighter"));
     this.sound = new SoundEngine();
@@ -570,14 +688,14 @@ class CostumeCombat {
     this.cpuMoveUntil = 0;
     this.finishWinner = null;
     this.finishTimer = null;
+    this.isStarting = false;
     this.spearElement = $("#spear");
 
     this.bindUI();
     this.bindInput();
     this.player.playIdle(true);
     this.cpu.playIdle(true);
-    this.player.preload(["idle", "walk", "rightHook", "leftHook", "kick", "block", "crouch"]);
-    this.cpu.preload(["idle", "walk", "rightHook", "leftHook", "kick", "block", "crouch"]);
+    this.media.preloadAll();
     requestAnimationFrame((time) => this.tick(time));
   }
 
@@ -752,11 +870,27 @@ class CostumeCombat {
   }
 
   async startMatch() {
+    if (this.isStarting) return;
+    this.isStarting = true;
+    const trigger = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+    const triggerLabel = trigger?.textContent;
+    if (trigger) {
+      trigger.disabled = true;
+      trigger.textContent = "Loading fighters...";
+    }
     this.sound.ensure();
     this.sound.preloadSamples();
     this.sound.ui();
     this.flowToken += 1;
     const token = this.flowToken;
+    this.phase = "loading";
+    await this.media.preloadAll();
+    if (trigger) {
+      trigger.disabled = false;
+      trigger.textContent = triggerLabel;
+    }
+    this.isStarting = false;
+    if (token !== this.flowToken) return;
     this.showScreen("game-screen");
     this.arena.className = `arena stage-${this.selectedStage}`;
     $("#result-panel").classList.remove("is-visible");
@@ -767,8 +901,6 @@ class CostumeCombat {
     this.cpu.damageScale = DIFFICULTY[this.selectedDifficulty].damage;
     this.roundNumber = 1;
     this.updateRoundPips();
-    this.player.preload(Object.keys(MOVES));
-    this.cpu.preload(Object.keys(MOVES));
     await this.startRound(token);
   }
 
@@ -830,8 +962,9 @@ class CostumeCombat {
     if (canMove && direction && !down) {
       this.player.move(direction, deltaSeconds, 13);
       const backwards = (direction > 0) !== (this.player.facing === "R");
-      if (this.player.current?.name !== "walk" || this.player.current.reverse !== backwards || this.player.current.facing !== this.player.facing) {
-        this.player.play("walk", { reverse: backwards });
+      const walkName = backwards ? "walkReverse" : "walk";
+      if (this.player.current?.name !== walkName || this.player.current.facing !== this.player.facing) {
+        this.player.play(walkName);
       }
     } else if (canMove && !down && this.player.current?.spec.type === "movement") {
       this.player.playIdle(true);
@@ -856,7 +989,8 @@ class CostumeCombat {
     if (now < this.cpuMoveUntil && this.cpu.canAct()) {
       this.cpu.move(this.cpuMoveDirection, deltaSeconds, profile.speed);
       const backwards = (this.cpuMoveDirection > 0) !== (this.cpu.facing === "R");
-      if (this.cpu.current?.name !== "walk" || this.cpu.current.reverse !== backwards) this.cpu.play("walk", { reverse: backwards });
+      const walkName = backwards ? "walkReverse" : "walk";
+      if (this.cpu.current?.name !== walkName || this.cpu.current.facing !== this.cpu.facing) this.cpu.play(walkName);
     } else if (this.cpu.current?.spec.type === "movement") {
       this.cpu.playIdle(true);
     }
