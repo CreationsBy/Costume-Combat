@@ -205,6 +205,15 @@ const DIFFICULTY = {
 const SOURCE_CROP = { x: 0, y: 0, width: 460, height: 540 };
 const DOUBLE_TAP_MS = 285;
 const COMMAND_WINDOW_MS = 520;
+const PLAYBACK_SPEED = {
+  idle: 1.12,
+  movement: 1.55,
+  crouch: 1.45,
+  block: 1.55,
+  attack: 1.65,
+  reaction: 1.65,
+  cinematic: 1.32,
+};
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -340,7 +349,10 @@ class Fighter {
   }
 
   resolveFile(spec, facing = this.facing) {
-    const value = spec.files[facing];
+    // The recording labels describe the camera side, which is opposite the
+    // fighter's in-game facing direction.
+    const recordedSide = facing === "R" ? "L" : "R";
+    const value = spec.files[recordedSide];
     return typeof value === "string" ? { source: value, mirror: false } : value;
   }
 
@@ -354,7 +366,8 @@ class Fighter {
     if (this.currentVideo && this.currentVideo !== video) this.currentVideo.pause();
     video.pause();
     video.loop = Boolean(spec.loop) && !options.reverse;
-    video.playbackRate = 1;
+    const playbackRate = options.playbackRate ?? spec.playbackRate ?? PLAYBACK_SPEED[spec.type] ?? 1.35;
+    video.playbackRate = playbackRate;
 
     const beginPlayback = () => {
       const start = options.reverse && Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.04) : 0;
@@ -372,6 +385,7 @@ class Fighter {
       mirror: Boolean(file.mirror),
       didHit: false,
       playedAudioCues: new Set(),
+      playbackRate,
       reverse: Boolean(options.reverse),
       startedAt: performance.now(),
     };
@@ -448,7 +462,7 @@ class Fighter {
     if (!video || !state) return;
 
     if (state.reverse && Number.isFinite(video.duration) && video.readyState >= 2) {
-      const next = video.currentTime - deltaSeconds;
+      const next = video.currentTime - deltaSeconds * state.playbackRate;
       video.currentTime = next <= 0 ? Math.max(0, video.duration - 0.05) : next;
     }
 
