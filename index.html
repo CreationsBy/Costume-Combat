@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090705">
+  <title>Costume Combat</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app">
+    <section id="menu-screen" class="screen menu-screen is-active" aria-label="Main menu">
+      <div class="menu-smoke smoke-one"></div>
+      <div class="menu-smoke smoke-two"></div>
+      <div class="menu-crest" aria-hidden="true">
+        <span class="crest-ring"></span>
+        <span class="crest-c"></span>
+      </div>
+      <div class="menu-copy">
+        <p class="eyebrow">An original arcade fighter</p>
+        <h1><span>Costume</span><span>Combat</span></h1>
+        <p class="menu-tagline">Every mask hides a challenger.</p>
+      </div>
+      <nav class="menu-actions" aria-label="Game mode">
+        <button id="cpu-mode-button" class="arcade-button" type="button">
+          <span class="button-index">01</span>
+          <span>1P vs. CPU</span>
+        </button>
+        <button id="two-player-button" class="arcade-button" type="button">
+          <span class="button-index">02</span>
+          <span>1P vs. 2P</span>
+          <small>Controller</small>
+        </button>
+      </nav>
+      <p class="menu-footnote">Keyboard recommended · Click or press a key for music</p>
+      <button class="menu-sound" data-sound-toggle type="button" aria-pressed="true">Sound: On</button>
+    </section>
+
+    <section id="setup-screen" class="screen setup-screen" aria-label="Match setup">
+      <button class="back-button" data-back-menu type="button" aria-label="Back to main menu">← Back</button>
+      <div class="setup-card">
+        <p class="eyebrow">1P vs. CPU</p>
+        <h2>Choose your fighters</h2>
+        <div class="roster-picker">
+          <div class="roster-side" role="radiogroup" aria-label="Player one fighter">
+            <h3>Player one</h3>
+            <button class="fighter-card is-selected" data-side="player" data-fighter="scorpion" role="radio" aria-checked="true" type="button"><span class="fighter-emblem scorpion-emblem" aria-hidden="true">S</span><span><strong>Scorpion</strong><small>Rope spear · martial arts</small></span></button>
+            <button class="fighter-card" data-side="player" data-fighter="drift" role="radio" aria-checked="false" type="button"><span class="fighter-emblem drift-emblem" aria-hidden="true"></span><span><strong>Drift</strong><small>Rainbow Smash · pickaxe</small></span></button>
+          </div>
+          <span class="roster-versus" aria-hidden="true">VS</span>
+          <div class="roster-side" role="radiogroup" aria-label="CPU fighter">
+            <h3>CPU opponent</h3>
+            <button class="fighter-card" data-side="cpu" data-fighter="scorpion" role="radio" aria-checked="false" type="button"><span class="fighter-emblem scorpion-emblem" aria-hidden="true">S</span><span><strong>Scorpion</strong><small>Rope spear · martial arts</small></span></button>
+            <button class="fighter-card is-selected" data-side="cpu" data-fighter="drift" role="radio" aria-checked="true" type="button"><span class="fighter-emblem drift-emblem" aria-hidden="true"></span><span><strong>Drift</strong><small>Rainbow Smash · pickaxe</small></span></button>
+          </div>
+        </div>
+        <h3>Select difficulty</h3>
+        <div class="difficulty-grid">
+          <button class="difficulty-button" data-difficulty="easy" type="button">
+            <strong>Easy</strong><span>Patient rival</span>
+          </button>
+          <button class="difficulty-button is-selected" data-difficulty="medium" type="button">
+            <strong>Medium</strong><span>Arcade balance</span>
+          </button>
+          <button class="difficulty-button" data-difficulty="hard" type="button">
+            <strong>Hard</strong><span>Fast counters</span>
+          </button>
+          <button class="difficulty-button" data-difficulty="very-hard" type="button">
+            <strong>Very Hard</strong><span>No mercy</span>
+          </button>
+        </div>
+
+        <h3>Choose a stage</h3>
+        <div class="stage-picker" role="radiogroup" aria-label="Stage">
+          <button class="stage-card is-selected" data-stage="moon-gate" type="button" role="radio" aria-checked="true">
+            <span class="stage-preview stage-preview-moon"><i></i></span>
+            <strong>Moon Gate</strong>
+          </button>
+          <button class="stage-card" data-stage="ember-forge" type="button" role="radio" aria-checked="false">
+            <span class="stage-preview stage-preview-forge"><i></i></span>
+            <strong>Ember Forge</strong>
+          </button>
+          <button class="stage-card" data-stage="neon-rooftop" type="button" role="radio" aria-checked="false">
+            <span class="stage-preview stage-preview-neon"><i></i></span>
+            <strong>Neon Rooftop</strong>
+          </button>
+        </div>
+        <button id="begin-match-button" class="begin-button" type="button">Enter the arena</button>
+        <p id="loading-error" class="loading-error" role="alert"></p>
+      </div>
+    </section>
+
+    <section id="controller-screen" class="screen setup-screen" aria-label="Two player setup">
+      <button class="back-button" data-back-menu type="button" aria-label="Back to main menu">← Back</button>
+      <div class="setup-card controller-card">
+        <p class="eyebrow">1P vs. 2P</p>
+        <h2>Controller fighter</h2>
+        <div class="controller-icon" aria-hidden="true">✣</div>
+        <p>Player two controller support is staged for the next combat pass. The full 1P vs. CPU game is ready now.</p>
+        <button id="controller-cpu-button" class="begin-button" type="button">Play vs. CPU</button>
+      </div>
+    </section>
+
+    <section id="game-screen" class="screen game-screen" aria-label="Costume Combat match">
+      <div id="arena" class="arena stage-moon-gate">
+        <div class="stage-layer stage-sky"></div>
+        <div class="stage-layer stage-moon"></div>
+        <div class="stage-layer stage-city"></div>
+        <div class="stage-layer stage-architecture">
+          <span class="pillar pillar-left"></span>
+          <span class="pillar pillar-right"></span>
+          <span class="hanging-chain chain-left"></span>
+          <span class="hanging-chain chain-right"></span>
+        </div>
+        <div class="stage-layer stage-embers" aria-hidden="true"></div>
+        <div class="stage-layer stage-floor"></div>
+        <div class="stage-vignette"></div>
+
+        <header class="fight-hud" aria-label="Match status">
+          <div class="fighter-hud player-hud">
+            <div class="hud-name-row"><strong id="player-name">Scorpion</strong><span>1P</span></div>
+            <div class="health-frame"><div id="player-damage" class="damage-bar"></div><div id="player-health" class="health-bar"></div></div>
+            <div id="player-rounds" class="round-pips" aria-label="Player rounds"><i></i><i></i></div>
+          </div>
+          <div class="timer-wrap"><span id="round-timer">90</span><small id="round-label">Round 1</small></div>
+          <div class="fighter-hud cpu-hud">
+            <div class="hud-name-row"><span>CPU</span><strong id="cpu-name">Drift</strong></div>
+            <div class="health-frame"><div id="cpu-damage" class="damage-bar"></div><div id="cpu-health" class="health-bar"></div></div>
+            <div id="cpu-rounds" class="round-pips" aria-label="CPU rounds"><i></i><i></i></div>
+          </div>
+        </header>
+
+        <div id="announcement" class="announcement" aria-live="assertive">
+          <span id="announcement-kicker"></span>
+          <strong id="announcement-text"></strong>
+        </div>
+
+        <div id="player-fighter" class="fighter fighter-player" aria-label="Player one Scorpion">
+          <canvas width="360" height="430"></canvas>
+          <span class="fighter-shadow"></span>
+        </div>
+        <div id="cpu-fighter" class="fighter fighter-cpu" aria-label="CPU Shadow">
+          <canvas width="360" height="430"></canvas>
+          <span class="fighter-shadow"></span>
+        </div>
+
+        <div id="spear" class="spear" aria-hidden="true">
+          <span class="spear-rope"></span><span class="spear-head"></span>
+        </div>
+        <div id="impact" class="impact" aria-hidden="true"><i></i><i></i><i></i></div>
+
+        <div id="result-panel" class="result-panel" aria-hidden="true">
+          <p id="result-overline">Match complete</p>
+          <h2 id="result-title">Scorpion Wins</h2>
+          <div class="result-actions">
+            <button id="rematch-button" type="button">Rematch</button>
+            <button id="menu-button" type="button">Main menu</button>
+          </div>
+        </div>
+
+        <div id="pause-panel" class="pause-panel" hidden><strong>Paused</strong><button id="resume-button" type="button">Resume fight</button></div>
+        <button id="sound-button" class="corner-button sound-button" data-sound-toggle type="button" aria-label="Toggle sound" aria-pressed="true">Sound: On</button>
+        <button id="pause-button" class="corner-button pause-button" type="button">Pause</button>
+        <button id="exit-button" class="corner-button exit-button" type="button">Exit</button>
+
+        <aside class="control-strip" aria-label="Keyboard controls">
+          <span><kbd>←</kbd><kbd>→</kbd> Move</span>
+          <span><kbd>↓</kbd> Crouch</span>
+          <span><kbd>A</kbd>/<kbd>W</kbd> Punch</span>
+          <span><kbd>S</kbd> Kick</span>
+          <span><kbd>A</kbd>+<kbd>D</kbd> Block</span>
+          <button id="moves-button" type="button">Move list</button>
+        </aside>
+      </div>
+    </section>
+
+    <dialog id="moves-dialog" class="moves-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div><p class="eyebrow" id="moves-character">Scorpion</p><h2>Move list</h2></div>
+          <button aria-label="Close move list">×</button>
+        </div>
+        <div class="move-grid">
+          <span><kbd>A</kbd> or <kbd>W</kbd></span><strong>Right hook</strong>
+          <span><kbd>A</kbd> <kbd>A</kbd></span><strong>Double hook</strong>
+          <span><kbd>S</kbd> <kbd>S</kbd></span><strong>Double kick</strong>
+          <span><kbd>↓</kbd> + <kbd>W</kbd></span><strong>Uppercut</strong>
+          <span><kbd>→</kbd>, <kbd>S</kbd></span><strong>Side slash</strong>
+          <span><kbd>→</kbd> + <kbd>S</kbd></span><strong>Side kick</strong>
+          <span><kbd>→</kbd> + <kbd>W</kbd></span><strong>Blade slash</strong>
+          <span><kbd>→</kbd> <kbd>→</kbd>, <kbd>S</kbd></span><strong>Rope spear</strong>
+          <span><kbd>A</kbd> <kbd>A</kbd> <kbd>W</kbd></span><strong>Spirit punch</strong>
+          <span><kbd>F</kbd></span><strong>Fatality (when prompted)</strong>
+        </div>
+        <p class="dialog-note">Quick taps must land within the combo window. Hold → for held-button moves.</p>
+      </form>
+    </dialog>
+  </main>
+
+  <noscript>Costume Combat needs JavaScript enabled to run.</noscript>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
