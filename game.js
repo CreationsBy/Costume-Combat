@@ -1,3 +1,5 @@
+import SPRITE_MANIFEST from "./sprite-manifest.js";
+
 const ASSET = "animations";
 const AUDIO = "audio";
 
@@ -199,12 +201,6 @@ const MOVES = {
   },
 };
 
-const VIDEO_SOURCES = [...new Set(
-  Object.values(MOVES).flatMap((move) => Object.values(move.files).map((file) => (
-    typeof file === "string" ? file : file.source
-  ))),
-)];
-
 const DIFFICULTY = {
   easy: { think: 620, aggression: 0.48, block: 0.07, special: 0.09, damage: 0.72, speed: 8.5 },
   medium: { think: 410, aggression: 0.62, block: 0.15, special: 0.14, damage: 0.88, speed: 10.5 },
@@ -212,8 +208,6 @@ const DIFFICULTY = {
   "very-hard": { think: 150, aggression: 0.9, block: 0.38, special: 0.3, damage: 1.18, speed: 14 },
 };
 
-// GitHub Pages build clips are already cropped to the performance area.
-const SOURCE_CROP = { x: 0, y: 0, width: 460, height: 540 };
 const DOUBLE_TAP_MS = 285;
 const COMMAND_WINDOW_MS = 520;
 const PLAYBACK_SPEED = {
@@ -238,37 +232,109 @@ const moveStartRatio = (spec) => spec.startRatio ?? (
           : 0
 );
 
-class VideoAssetCache {
-  constructor(sources) {
-    this.sources = sources;
-    this.objectUrls = new Map();
+class SpriteAssetCache {
+  constructor(manifest) {
+    this.manifest = manifest;
+    this.animations = manifest.animations;
+    this.sources = [manifest.pack];
+    this.packBlob = null;
+    this.decodedSheets = new Map();
     this.failures = new Set();
     this.preloadPromise = null;
+    this.maximumDecodedSheets = 18;
   }
 
-  resolve(source) {
-    return this.objectUrls.get(source) || source;
+  getAnimation(source) {
+    return this.animations[source] || null;
   }
 
   preloadAll() {
     if (this.preloadPromise) return this.preloadPromise;
-    let nextIndex = 0;
-    const loadNext = async () => {
-      while (nextIndex < this.sources.length) {
-        const source = this.sources[nextIndex++];
-        try {
-          const response = await fetch(source, { cache: "force-cache" });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const blob = await response.blob();
-          this.objectUrls.set(source, URL.createObjectURL(blob));
-        } catch {
-          // Direct URLs remain a safe fallback if prefetching is unavailable.
-          this.failures.add(source);
-        }
-      }
-    };
-    this.preloadPromise = Promise.all(Array.from({ length: 5 }, () => loadNext()));
+    this.preloadPromise = fetch(this.manifest.pack, { cache: "force-cache" }).then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      if (blob.size !== this.manifest.packBytes) throw new Error(`Expected ${this.manifest.packBytes} bytes, received ${blob.size}`);
+      this.packBlob = blob;
+      return blob;
+    }).catch((error) => {
+      this.failures.add(this.manifest.pack);
+      throw error;
+    });
+    this.preloadPromise.catch(() => {});
     return this.preloadPromise;
+  }
+
+  getSheet(sheet) {
+    const key = `${sheet.offset}:${sheet.length}`;
+    if (this.decodedSheets.has(key)) {
+      const cached = this.decodedSheets.get(key);
+      this.decodedSheets.delete(key);
+      this.decodedSheets.set(key, cached);
+      return cached;
+    }
+
+    while (this.decodedSheets.size >= this.maximumDecodedSheets) {
+      const [oldKey, oldRecord] = this.decodedSheets.entries().next().value;
+      if (oldRecord.objectUrl) URL.revokeObjectURL(oldRecord.objectUrl);
+      this.decodedSheets.delete(oldKey);
+    }
+
+    const image = new Image();
+    image.decoding = "async";
+    const record = { key, sheet, image, objectUrl: null, ready: false, failed: false, promise: null };
+    record.promise = this.preloadAll().then(() => new Promise((resolve, reject) => {
+      if (sheet.offset < 0 || sheet.length <= 0 || sheet.offset + sheet.length > this.packBlob.size) {
+        reject(new Error(`Invalid sprite range: ${sheet.name}`));
+        return;
+      }
+      record.objectUrl = URL.createObjectURL(this.packBlob.slice(sheet.offset, sheet.offset + sheet.length, "image/webp"));
+      image.addEventListener("load", () => {
+        record.ready = true;
+        resolve(record);
+      }, { once: true });
+      image.addEventListener("error", () => {
+        reject(new Error(`Unable to decode packed sprite sheet: ${sheet.name}`));
+      }, { once: true });
+      image.src = record.objectUrl;
+    })).catch((error) => {
+      record.failed = true;
+      this.failures.add(sheet.name);
+      throw error;
+    });
+    // Preparation is intentionally allowed to continue if a missing asset later
+    // falls back to idle; avoid an unhandled rejection in that recovery path.
+    record.promise.catch(() => {});
+    this.decodedSheets.set(key, record);
+    return record;
+  }
+
+  getFrame(source, time) {
+    const animation = this.getAnimation(source);
+    if (!animation) return null;
+    const frameIndex = clamp(Math.floor(Math.max(0, time) * this.manifest.frameRate), 0, animation.frameCount - 1);
+    const sheetIndex = clamp(Math.floor(frameIndex / animation.sheetCapacity), 0, animation.sheets.length - 1);
+    const sheet = animation.sheets[sheetIndex];
+    const localFrame = frameIndex - sheet.startFrame;
+    return {
+      animation,
+      frameIndex,
+      sheetIndex,
+      sheet,
+      localFrame,
+      column: localFrame % animation.columns,
+      row: Math.floor(localFrame / animation.columns),
+      record: this.getSheet(sheet),
+    };
+  }
+
+  prepareAnimation(source, time = 0) {
+    const frame = this.getFrame(source, time);
+    return frame ? frame.record.promise : Promise.reject(new Error(`Missing sprite animation: ${source}`));
+  }
+
+  prepareNextSheet(frame) {
+    const nextSheet = frame.animation.sheets[frame.sheetIndex + 1];
+    if (nextSheet) this.getSheet(nextSheet);
   }
 }
 
@@ -365,73 +431,32 @@ class Fighter {
     this.id = id;
     this.element = element;
     this.canvas = $("canvas", element);
-    this.context = this.canvas.getContext("2d", { alpha: true, willReadFrequently: true });
-    this.videos = new Map();
+    this.context = this.canvas.getContext("2d", { alpha: true });
     this.current = null;
-    this.currentVideo = null;
     this.facing = id === "player" ? "R" : "L";
     this.x = id === "player" ? 29 : 71;
     this.health = 100;
     this.rounds = 0;
-    this.canChromaKey = true;
-    this.lastRenderedTime = -1;
+    this.lastRenderedFrameKey = "";
     this.moveDirection = 0;
-    this.manualReverse = false;
     this.damageScale = 1;
     this.setPosition(this.x);
   }
 
   preload(moveNames) {
-    for (const name of moveNames) {
-      const spec = MOVES[name];
-      for (const side of ["L", "R"]) this.getVideo(this.resolveFile(spec, side).source);
-    }
+    this.prepare(moveNames);
   }
 
   prepare(moveNames) {
     for (const name of moveNames) {
       const spec = MOVES[name];
       if (!spec) continue;
-      const video = this.getVideo(this.resolveFile(spec).source);
-      if (video === this.currentVideo) continue;
-      const seekToStart = () => {
-        if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-        const start = video.duration * moveStartRatio(spec);
-        if (Math.abs(video.currentTime - start) > 0.025) video.currentTime = start;
-      };
-      if (video.readyState >= 1) seekToStart();
-      else video.addEventListener("loadedmetadata", seekToStart, { once: true });
-      if (video.readyState < 2) video.load();
+      const source = this.resolveFile(spec).source;
+      const animation = this.game.media.getAnimation(source);
+      if (!animation) continue;
+      const startTime = animation.duration * moveStartRatio(spec);
+      this.game.media.prepareAnimation(source, startTime).catch(() => {});
     }
-  }
-
-  getVideo(source) {
-    if (this.videos.has(source)) return this.videos.get(source);
-    while (this.videos.size >= 10) {
-      const disposable = [...this.videos.entries()].find(([, candidate]) => candidate !== this.currentVideo);
-      if (!disposable) break;
-      const [oldSource, oldVideo] = disposable;
-      oldVideo.pause();
-      oldVideo.removeAttribute("src");
-      oldVideo.load();
-      this.videos.delete(oldSource);
-    }
-    const video = document.createElement("video");
-    const cachedSource = this.game.media.resolve(source);
-    video.src = cachedSource;
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
-    video.disablePictureInPicture = true;
-    video.addEventListener("error", () => {
-      const directSource = new URL(source, document.baseURI).href;
-      if (video.src !== directSource) {
-        video.src = source;
-        video.load();
-      }
-    }, { once: true });
-    this.videos.set(source, video);
-    return video;
   }
 
   resolveFile(spec, facing = this.facing) {
@@ -447,20 +472,19 @@ class Fighter {
     if (!spec) return false;
     const facing = options.facing || this.facing;
     const file = this.resolveFile(spec, facing);
-    const video = this.getVideo(file.source);
-
-    if (this.currentVideo && this.currentVideo !== video) this.currentVideo.pause();
-    video.pause();
-    video.loop = Boolean(spec.loop) && !options.reverse;
+    const animation = this.game.media.getAnimation(file.source);
+    if (!animation) return false;
     const playbackRate = options.playbackRate ?? spec.playbackRate ?? PLAYBACK_SPEED[spec.type] ?? 1.35;
     const startRatio = options.startRatio ?? moveStartRatio(spec);
-    video.playbackRate = playbackRate;
-
     const playbackToken = Symbol(name);
-    this.currentVideo = video;
+    const startTime = options.reverse
+      ? Math.max(0, animation.duration - (1 / SPRITE_MANIFEST.frameRate))
+      : animation.duration * startRatio;
     this.current = {
       name,
       spec,
+      source: file.source,
+      animation,
       facing,
       mirror: Boolean(file.mirror),
       didHit: false,
@@ -468,93 +492,40 @@ class Fighter {
       playbackRate,
       startRatio,
       reverse: Boolean(options.reverse),
-      startedAt: performance.now(),
+      time: startTime,
       playbackToken,
-      retriedLoad: false,
       ready: false,
-      startRequested: false,
+      completed: false,
       holdAtStart: Boolean(options.holdAtStart),
       resumeRequested: !options.holdAtStart,
     };
-    this.manualReverse = Boolean(options.reverse);
-    this.lastRenderedTime = -1;
+    this.lastRenderedFrameKey = "";
 
-    const beginPlayback = () => {
-      const state = this.current;
-      if (state?.playbackToken !== playbackToken || this.currentVideo !== video || state.startRequested) return;
-      state.startRequested = true;
-      const start = options.reverse && Number.isFinite(video.duration)
-        ? Math.max(0, video.duration - 0.04)
-        : Number.isFinite(video.duration) ? video.duration * startRatio : 0;
-      const startVideo = () => {
-        const activeState = this.current;
-        if (activeState?.playbackToken !== playbackToken || this.currentVideo !== video) return;
-        if (activeState.holdAtStart && !activeState.resumeRequested) {
-          video.pause();
-          activeState.ready = true;
-          this.render();
-          return;
-        }
-        if (options.reverse) {
-          activeState.ready = true;
-          return;
-        }
-        video.play().then(() => {
-          if (this.current?.playbackToken === playbackToken) this.current.ready = true;
-        }).catch(() => {
-          if (this.current?.playbackToken === playbackToken) {
-            this.current.ready = false;
-            this.current.startRequested = false;
-          }
-        });
-      };
-      try {
-        if (Math.abs(video.currentTime - start) > 0.025 || video.ended) {
-          video.addEventListener("seeked", startVideo, { once: true });
-          video.currentTime = start;
-        } else {
-          startVideo();
-        }
-      } catch {
-        startVideo();
-      }
-    };
-    if (video.readyState >= 2) beginPlayback();
-    else {
-      video.addEventListener("canplay", beginPlayback, { once: true });
-      video.load();
+    const firstFrame = this.game.media.getFrame(file.source, startTime);
+    if (firstFrame?.record.ready) {
+      this.current.ready = true;
+      this.render(true, firstFrame);
+    } else {
+      this.game.media.prepareAnimation(file.source, startTime).then(() => {
+        if (this.current?.playbackToken !== playbackToken) return;
+        this.current.ready = true;
+        this.render(true);
+      }).catch(() => {});
     }
-
-    window.setTimeout(() => {
-      const state = this.current;
-      if (state?.playbackToken !== playbackToken || state.ready) return;
-      state.retriedLoad = true;
-      state.startRequested = false;
-      video.addEventListener("canplay", beginPlayback, { once: true });
-      video.load();
-    }, 850);
 
     window.setTimeout(() => {
       const state = this.current;
       if (state?.playbackToken !== playbackToken || state.ready || name === "idle") return;
       this.playIdle(true);
-    }, 2400);
+    }, 1500);
     return true;
   }
 
   releaseHeldAnimation() {
     const state = this.current;
-    const video = this.currentVideo;
-    if (!state || !video || !state.holdAtStart) return false;
+    if (!state || !state.holdAtStart) return false;
     state.holdAtStart = false;
     state.resumeRequested = true;
-    if (!state.ready) return true;
-    state.ready = false;
-    video.play().then(() => {
-      if (this.current === state) state.ready = true;
-    }).catch(() => {
-      if (this.current === state) state.ready = false;
-    });
     return true;
   }
 
@@ -623,27 +594,37 @@ class Fighter {
   }
 
   update(deltaSeconds) {
-    const video = this.currentVideo;
     const state = this.current;
-    if (!video || !state) return;
+    if (!state) return;
 
-    if (!state.ready) {
-      this.render();
+    const frame = this.game.media.getFrame(state.source, state.time);
+    if (!frame?.record.ready) {
+      state.ready = false;
+      this.render(false, frame);
       return;
     }
+    state.ready = true;
 
     if (state.holdAtStart && !state.resumeRequested) {
-      this.render();
+      this.render(false, frame);
       return;
     }
 
-    if (state.reverse && Number.isFinite(video.duration) && video.readyState >= 2) {
-      const next = video.currentTime - deltaSeconds * state.playbackRate;
-      video.currentTime = next <= 0 ? Math.max(0, video.duration - 0.05) : next;
+    if (state.completed) {
+      this.render(false, frame);
+      return;
     }
 
-    const duration = video.duration;
-    const normalized = Number.isFinite(duration) && duration > 0 ? video.currentTime / duration : 0;
+    if (frame.localFrame >= frame.sheet.frameCount - 4) this.game.media.prepareNextSheet(frame);
+
+    const direction = state.reverse ? -1 : 1;
+    state.time += deltaSeconds * state.playbackRate * direction;
+    const duration = state.animation.duration;
+    if (state.spec.loop) {
+      if (state.time >= duration) state.time %= duration;
+      if (state.time < 0) state.time = Math.max(0, duration + (state.time % duration));
+    }
+    const normalized = duration > 0 ? clamp(state.time / duration, 0, 1) : 0;
 
     if (state.spec.audioCues) {
       state.spec.audioCues.forEach((cue, index) => {
@@ -662,62 +643,53 @@ class Fighter {
     }
 
     const endRatio = state.spec.endRatio ?? 0.985;
-    const isComplete = video.ended || (Number.isFinite(duration) && normalized >= endRatio);
+    const isComplete = !state.spec.loop && (state.reverse ? normalized <= 0 : normalized >= endRatio);
     if (isComplete && !state.spec.loop) {
       if (state.spec.holdLastFrame) {
-        video.pause();
+        state.time = duration * endRatio;
+        state.completed = true;
       } else if (this.game.phase === "active") {
         this.playIdle(true);
+        return;
+      } else {
+        state.time = Math.min(state.time, duration);
+        state.completed = true;
       }
     }
 
     this.render();
   }
 
-  render() {
-    const video = this.currentVideo;
-    if (!video || video.readyState < 2 || video.currentTime === this.lastRenderedTime) return;
+  render(force = false, suppliedFrame = null) {
+    const state = this.current;
+    if (!state) return false;
+    const frame = suppliedFrame || this.game.media.getFrame(state.source, state.time);
+    if (!frame?.record.ready || frame.record.image.naturalWidth === 0) return false;
+    const frameKey = `${state.source}:${frame.frameIndex}:${state.mirror}`;
+    if (!force && frameKey === this.lastRenderedFrameKey) return true;
     const context = this.context;
     const width = this.canvas.width;
     const height = this.canvas.height;
     context.clearRect(0, 0, width, height);
     context.save();
-    if (this.current.mirror) {
+    if (state.mirror) {
       context.translate(width, 0);
       context.scale(-1, 1);
     }
     context.drawImage(
-      video,
-      SOURCE_CROP.x,
-      SOURCE_CROP.y,
-      SOURCE_CROP.width,
-      SOURCE_CROP.height,
+      frame.record.image,
+      frame.column * frame.animation.frameWidth,
+      frame.row * frame.animation.frameHeight,
+      frame.animation.frameWidth,
+      frame.animation.frameHeight,
       0,
       0,
       width,
       height,
     );
     context.restore();
-
-    if (this.canChromaKey) {
-      try {
-        const frame = context.getImageData(0, 0, width, height);
-        const pixels = frame.data;
-        for (let index = 0; index < pixels.length; index += 4) {
-          const red = pixels[index];
-          const green = pixels[index + 1];
-          const blue = pixels[index + 2];
-          const peak = Math.max(red, green, blue);
-          if (peak <= 16) pixels[index + 3] = 0;
-          else if (peak < 46) pixels[index + 3] = Math.round(((peak - 16) / 30) * pixels[index + 3]);
-        }
-        context.putImageData(frame, 0, 0);
-      } catch {
-        this.canChromaKey = false;
-        this.canvas.classList.add("blend-fallback");
-      }
-    }
-    this.lastRenderedTime = video.currentTime;
+    this.lastRenderedFrameKey = frameKey;
+    return true;
   }
 }
 
@@ -725,7 +697,7 @@ class CostumeCombat {
   constructor() {
     this.arena = $("#arena");
     this.gameScreen = $("#game-screen");
-    this.media = new VideoAssetCache(VIDEO_SOURCES);
+    this.media = new SpriteAssetCache(SPRITE_MANIFEST);
     this.player = new Fighter(this, "player", $("#player-fighter"));
     this.cpu = new Fighter(this, "cpu", $("#cpu-fighter"));
     this.sound = new SoundEngine();
@@ -989,7 +961,7 @@ class CostumeCombat {
     if (token !== this.flowToken) return;
     this.player.playIdle(true);
     this.cpu.playIdle(true);
-    this.primeCombatVideos();
+    this.primeCombatSprites();
     await this.announce("Fight!", "", "", 640, token);
     if (token !== this.flowToken) return;
     this.phase = "active";
@@ -997,7 +969,7 @@ class CostumeCombat {
     this.cpuNextThink = 0;
   }
 
-  primeCombatVideos() {
+  primeCombatSprites() {
     const commonMoves = [
       "rightHook", "kick", "walk", "walkReverse", "block", "crouch",
       "rightHookReaction", "kickReaction",
