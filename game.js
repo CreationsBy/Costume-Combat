@@ -431,9 +431,14 @@ class Fighter {
   }
 
   play(name, options = {}) {
-    const spec = this.moves[name];
-    if (!spec) return false;
     const facing = options.facing || this.facing;
+    const base = this.moves[name];
+    if (!base) return false;
+    // The right-side recording includes a longer wind-up before the actual
+    // side kick. Its contact occurs around 75%, after the old cutoff.
+    const spec = this.character === "scorpion" && name === "sideKick" && facing === "L"
+      ? { ...base, startRatio: 0.57, active: [0.69, 0.86], endRatio: 0.94 }
+      : base;
     const file = this.resolveFile(spec, facing);
     const animation = this.game.media.getAnimation(file.source);
     if (!animation) return false;
@@ -662,14 +667,17 @@ class Fighter {
     const drift = this.character === "drift";
     const drawHeight = drift ? width : height;
     const foot = frame.record.feet?.[frame.row * 4 + frame.column] ?? 246;
-    const drawTop = drift ? height - 12 - foot / 256 * drawHeight : 0;
+    const airborne = drift && state.spec.landAt && frame.frameIndex < 3 ? [0, 22, 12][frame.frameIndex] : 0;
+    const drawTop = drift ? height - 12 - foot / 256 * drawHeight - airborne : 0;
+    // Camera-side recordings have unequal horizontal margins around the body.
+    const drawLeft = drift ? 0 : (state.facing === "L" ? -28 : 12);
     context.drawImage(
       frame.record.image,
       frame.column * frame.animation.frameWidth,
       frame.row * frame.animation.frameHeight,
       frame.animation.frameWidth,
       frame.animation.frameHeight,
-      0,
+      drawLeft,
       drawTop,
       width,
       drawHeight,
@@ -766,10 +774,17 @@ class CostumeCombat {
       });
     }));
     $("#moves-button").addEventListener("click", () => {
-      this.setPaused(true);
+      this.setPaused(true, "moves");
       $("#moves-dialog").showModal();
     });
-    $("#moves-dialog").addEventListener("close", () => this.setPaused(false));
+    $("#moves-dialog").addEventListener("close", () => {
+      if (this.pauseReason === "moves") this.setPaused(false);
+    });
+    $("#moves-dialog").addEventListener("cancel", (event) => {
+      event.preventDefault();
+      $("#moves-dialog").close();
+      if (this.pauseReason === "moves") this.setPaused(false);
+    });
     $("#pause-button").addEventListener("click", () => this.setPaused(!this.paused));
     $("#resume-button").addEventListener("click", () => this.setPaused(false));
   }
@@ -781,9 +796,10 @@ class CostumeCombat {
     });
   }
 
-  setPaused(paused) {
+  setPaused(paused, reason = "manual") {
     if (paused && this.phase !== "active") return;
     this.paused = paused;
+    this.pauseReason = paused ? reason : null;
     this.keys.clear();
     this.lastFrame = performance.now();
     this.sound.setPaused(paused);

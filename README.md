@@ -1,68 +1,101 @@
 # Costume Combat
 
-Costume Combat is a dependency-free browser fighting game built from transparent sprite sheets converted from the supplied performance recordings. The current playable slice is a complete best-of-three **1P vs. CPU** match with four difficulty levels, three original stages, directional animations, reactions, combos, a rope-spear projectile, and a fatality finish.
+A Mortal Kombat style browser fighter with a complete best-of-three **1P vs. CPU** match, two selectable fighters, four difficulties, and three stages. Scorpion uses the original recorded animations. Drift combines the supplied fox-mask outfit and Rainbow Smash pickaxe references into 96 generated poses with transparent backgrounds.
 
-## Run it
+## Play locally
 
-Because the game uses JavaScript modules, run the folder through a small local server instead of double-clicking `index.html`.
+On this Windows setup:
 
 ```powershell
-python -m http.server 8080
+powershell -ExecutionPolicy Bypass -File .\Start-Game.ps1
 ```
 
-Then open `http://localhost:8080` in Chrome or Edge. No install or application build step is required.
+Open **http://localhost:8080** in Chrome or Edge. Alternatively, serve this directory with `python -m http.server 8080`. JavaScript modules require a local server; double-clicking `index.html` will not load the game correctly. No application build or dependency installation is needed to play.
 
-## Publish on GitHub Pages
+Choose either Scorpion or Drift for the player and CPU. Click or press a key to unlock browser audio. Sound can be muted from the menu or arena, and the preference persists. `Escape`, the Pause button, or opening the move list pauses active combat and audio. Leaving the window pauses an active fight.
 
-The 49 recordings have been converted into 109 transparent WebP atlas pages and bundled into the single **20.31 MB** `sprite-pack.bin` file. The entire site contains only **14 uploadable files**, avoiding GitHub's “fewer than 100 at a time” web-upload limit while remaining safely below GitHub's per-file size limit.
+## Combat changes
 
-1. Upload `index.html`, `styles.css`, `game.js`, `sprite-manifest.js`, `sprite-pack.bin`, `README.md`, `.nojekyll`, the `tools/` folder, and the four files in `audio/`.
-2. Open the repository's **Settings → Pages**.
-3. Choose **Deploy from a branch**, select `main` and `/ (root)`, then save.
-4. Wait for the Pages deployment to finish and open the URL GitHub provides.
+- Melee reach and body separation follow the rendered fighter size. Active attack frames must visibly reach the opponent's body, preventing damage across empty space. The CPU approaches to the same effective range.
+- The original camera-side recordings have corrected horizontal registration. The left-facing side kick now uses the later contact frames in its recording.
+- A spear travels before dealing damage. An unblocked hit briefly catches the victim, then pulls them smoothly into close follow-up range while the rope stays attached. Blocking causes chip damage without a pull. The same behavior supports Scorpion's spear and Drift's rift tether, in either direction.
+- Hit reactions and knockdowns cannot be cancelled by forced attack, crouch, or block inputs. Grounded Drift knockdowns are protected until recovery.
+- Fighter names, the move list, round announcements, results, and rematches follow the selected roster.
 
-The source recordings and conversion-ready cropped clips are retained locally in `.source-animations/` and excluded by `.gitignore`. Do not upload that backup folder; the deployed game no longer downloads or plays MP4 files.
+## Controls
 
-To rebuild the sprites after changing source footage, place the cropped clips in `.source-animations/deploy-clips/` and run:
+| Input | Scorpion | Drift |
+| --- | --- | --- |
+| Left / right arrow | Walk / retreat | Walk / retreat with pickaxe |
+| Hold down arrow | Crouch | Crouch guard |
+| `A` or `W` | Right hook | Pickaxe handle jab |
+| `A`, `A` | Double hook | Reverse hook combo |
+| `S` | Kick | Front kick |
+| `S`, `S` | Double kick | Kick / roundhouse combo |
+| `A` + `D` | Block | Braced pickaxe block |
+| Down + `W` | Uppercut | Rising pickaxe |
+| Tap right, release, then `S` | Side slash | Reverse head strike |
+| Hold right + `S` | Side kick | Braced side kick |
+| Hold right + `W` | Blade slash | Overhead chop |
+| Tap right twice, release, then `S` | Rope spear | Rift tether |
+| `A`, `A`, then `W` | Spirit punch | Heavy pickaxe thrust |
+| `F` when prompted | Fatality | Pickaxe finisher |
+| `Escape` | Pause / resume | Pause / resume |
+
+Quick sequences use a 285 ms double-tap window and a 520 ms command window. Held-arrow specials retain the existing right-arrow controls. The 2P controller menu remains a preview; playable combat is 1P versus CPU.
+
+## Sprite sheets and preview
+
+Open **http://localhost:8080/sprite-preview.html** to play, pause, scrub, and mirror every Drift animation.
+
+- [Complete 96-pose transparent sheet](sprites/drift/drift-complete.png): 1024 × 6144 PNG, four columns and 24 rows.
+- [Movement](sprites/drift/movement.png): idle, walk, retreat, crouch, block, intro.
+- [Pickaxe attacks](sprites/drift/attacks.png): jab, reverse hook, rising strike, heavy thrust, chop, tether.
+- [Kicks and falls](sprites/drift/kicks-falls.png): front kick, roundhouse, side kick, finisher, uppercut fall, heavy-hit fall.
+- [Reactions](sprites/drift/reactions.png): right hook, left hook, body kick, high kick, slash, spear.
+
+Each individual page is 1024 × 1536, four columns and six rows, with 256 × 256 cells. The art faces right and is mirrored for the opposite side. `drift-fighter.js` maps the artwork into all 27 animation states, including distinct timing for each hit reaction. Some related moves reuse poses with different sequences. Repeated contact, downed, and recovery frames make the action readable. Runtime foot registration fits the square cells into the original fighter canvas without stretching the body, with additional lift during knockdowns.
+
+The artwork was created with the built-in imagegen tool. Its opaque preview backgrounds were replaced with a flat key and compiled into actual RGBA transparency with the existing FFmpeg workflow. [The full prompt set is saved here](sprites/drift/generation-prompts.md). Source renders are in the ignored `.source-animations/drift/` directory.
+
+Rebuild those PNGs with FFmpeg available at `C:\ffmpeg\bin`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build-drift-sprites.ps1
+```
+
+The original 49 recordings remain packed in `sprite-pack.bin` with their byte ranges in `sprite-manifest.js`. To rebuild that original pack from the local cropped footage:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build-sprites.ps1 -Force
 ```
 
-## Controls
+## Audio
 
-| Input | Move |
-| --- | --- |
-| `←` / `→` | Walk; use the matching forward or retreat sprite animation |
-| Hold `↓` | Crouch and hold the final pose |
-| `A` or `W` | Right hook |
-| `A`, `A` | Right hook into left hook |
-| `S` | Kick |
-| `S`, `S` | Kick into right kick |
-| `A` + `D` | Block |
-| `↓` + `W` | Uppercut |
-| Tap `→`, then `S` | Side slash |
-| Hold `→` + `S` | Side kick |
-| Hold `→` + `W` | Blade slash; releasing `→` cancels it |
-| Tap `→`, `→`, then `S` | Rope spear |
-| `A`, `A`, then `W` | Spirit punch |
-| `F` | Fatality when **Finish Him!** appears |
+`sound-engine.js` contains original synthesized arrangements for the main menu, fighter selection, controller preview, Moon Gate, Ember Forge, Neon Rooftop, finish sequence, and results. They differ in melody, tempo, harmony, bass, and percussion. Scene transitions crossfade the music.
 
-Quick sequences use a 285 ms double-tap window and a 520 ms command window.
+Punches, kicks, pickaxe impacts, blocked hits, attack whooshes, and ground impacts have distinct synthesized effects synchronized to the combat timeline. The four existing MP3 slash, spear voice, and fatality cues remain available for Scorpion. Music and synthesized effects use Web Audio and require no external music services or downloads.
 
-## How the code works
+## Publish on GitHub Pages
 
-- `index.html` contains the menu, match setup, HUD, arena layers, move list, and result UI.
-- `styles.css` creates the Moon Gate, Ember Forge, and Neon Rooftop stages entirely with original CSS art. It also handles the arcade menu, HUD, responsive arena, CPU grayscale treatment, spear, and impact effects.
-- `game.js` is data-driven: every animation has direction-specific sprite IDs, damage, range, active frames, cutoff timing, and its matching ACT reaction.
-- `sprite-manifest.js` records every animation's duration, frame count, atlas layout, and byte range inside `sprite-pack.bin`. The renderer advances frames from the game clock, so attacks and reactions never wait for video seeking or a media `play()` promise.
-- The build step crops and scales every source frame, removes its black background, and stores the result in alpha-enabled WebP sheets. Runtime rendering is a single sprite-cell draw with no per-frame chroma-key loop.
-- Missing opposite-direction recordings use a horizontal mirror fallback. Retreating has dedicated reversed walking sprite sheets.
-- Recording-side labels are resolved opposite the in-game facing direction, keeping both fighters turned toward one another. Playback speed is normalized by animation type, and attack/reaction animations skip inactive lead-in frames while hit and audio cues stay locked to normalized timing.
-- The single pack is fetched once. Individual WebP pages are sliced from it in memory only when needed, and an 18-page decoded LRU pool bounds memory. Common combat sprites are warmed during the round intro, each matching reaction is prepared when its attack starts, and the next atlas page is prepared before an animation crosses its current page.
-- `tools/build-sprites.ps1` reproducibly converts the local source footage, packs every generated atlas into one binary asset, and regenerates the byte-offset manifest.
-- The CPU uses the same fighter state machine as the player. Difficulty changes its reaction interval, aggression, defense chance, move selection, movement speed, and damage.
-- Combat uses normalized stage coordinates, active-frame hit checks, health-gated round transitions, matching reactions, and a synchronized DOM rope-spear that extends when the performer's arm reaches the throw pose.
-- Audio cues share the move timelines: the regular slash has separate first/final strike sounds, side-slash and spear effects require a confirmed hit, the spear pull triggers its voice line, and the fatality cue follows the arm-extension frame. The victim's fatality reaction holds on its opening frame until that cue fires, then resumes immediately. P1 and CPU use the same cue system, and any future 2P fighter instance inherits it automatically.
+The `Costume-Combat/` copy contains the same deployable game. Upload the **contents of one game directory** to the repository root:
 
-The **1P vs. 2P** button is wired to a controller-mode preview screen. Full gamepad combat is intentionally left for the next pass so this version can concentrate on the requested 1P-vs-CPU mode.
+- `index.html`, `styles.css`, `game.js`
+- `combat-geometry.js`, `drift-fighter.js`, `sound-engine.js`
+- `sprite-manifest.js`, `sprite-pack.bin`
+- The `sprites/` and `audio/` directories, preserving their paths
+- `.nojekyll`, plus `sprite-preview.html` for the animation viewer
+- Optionally `README.md`, `Start-Game.ps1`, and `tools/` for local use and rebuilds
+
+Do not upload `.source-animations/` or `.codex-analysis/`. Enable Pages for the repository's root directory. All runtime asset paths are relative so repository subpath hosting works. This task updates local files; it does not publish them automatically.
+
+## Verification
+
+The automated browser suite covers attack contact and misses in both directions, both spear implementations, blocked pulls, reaction locks, every Drift frame mapping, alpha transparency, screen-size geometry, audio signal and mute behavior, pause/resume, character selection, stage changes, results, and rematches.
+
+```powershell
+python -m pip install playwright
+python tools/verify-game.py
+```
+
+The runner uses installed Chrome or Edge and starts its own temporary local web server. If neither browser is installed, run `python -m playwright install chromium`. Reports and screenshots are written to the ignored `.codex-analysis/` directory. The tested game has no browser runtime dependencies.

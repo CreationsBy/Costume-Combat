@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Drift · Sprite preview</title>
+  <link rel="icon" href="data:,">
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#100c12;color:#f2e5d5;font:15px/1.6 Consolas,monospace}main{max-width:1080px;margin:auto;padding:40px 24px}a{color:#ff83c2}h1{font-size:42px;line-height:1.1;margin:14px 0}p{color:#b4a0af}header{margin-bottom:28px}.layout{display:grid;grid-template-columns:1fr 1fr;gap:24px}.stage{position:relative;min-height:460px;display:grid;place-items:end center;border:1px solid #56404e;background:repeating-conic-gradient(#302635 0% 25%,#251d2a 0% 50%) 50%/24px 24px}.stage:after{content:"";position:absolute;left:0;right:0;bottom:16px;height:1px;background:#ff83c2;pointer-events:none}canvas{width:360px;height:430px;max-width:100%;object-fit:contain}label{display:block;color:#d0b4c7;margin:0 0 8px}select,input,button{font:inherit}select,button{width:100%;border:1px solid #765268;padding:12px;color:#f6ddeb;background:#251924}button{cursor:pointer;margin-top:12px}button:hover{border-color:#ff83c2}input{width:100%;accent-color:#ff83c2}.controls{padding:24px;border:1px solid #56404e}small{color:#b4a0af}.exports{display:flex;gap:18px;flex-wrap:wrap;margin:24px 0}.pages{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.pages img{display:block;width:100%;background:repeating-conic-gradient(#302635 0% 25%,#251d2a 0% 50%) 50%/12px 12px}.pages a{text-decoration:none}.pages span{display:block;margin:8px 0}button:focus-visible,a:focus-visible,select:focus-visible{outline:2px solid #ffe2a5;outline-offset:4px}@media(max-width:700px){.layout{grid-template-columns:1fr}.pages{grid-template-columns:1fr 1fr}.stage{min-height:430px}}
+  </style>
+</head>
+<body>
+<main>
+  <header><a href="index.html">← Back to the game</a><h1>Drift / Rainbow Smash</h1><p>96 poses. Pickaxe strikes, footwork, blocks, spear reactions, and knockdowns.<br>The checkerboard here is a preview surface; the exported PNGs have transparent backgrounds.</p></header>
+  <section class="layout" aria-label="Animation preview">
+    <div class="stage"><canvas id="preview" width="360" height="430" aria-label="Animated Drift fighter"></canvas></div>
+    <div class="controls">
+      <label for="animation">Animation</label><select id="animation"></select>
+      <button id="direction" type="button" aria-pressed="false">Facing right · flip</button>
+      <button id="play" type="button" aria-pressed="true">Pause animation</button>
+      <p><label for="speed">Playback speed</label><input id="speed" type="range" min="0.25" max="1.5" step="0.25" value="1"></p>
+      <p><label for="frame">Scrub frames</label><input id="frame" type="range" min="0" max="3" step="1" value="0"></p>
+      <output id="status" aria-live="polite">Loading sprites…</output>
+      <p><small>Both sides use the same artwork, mirrored in the game. The pink line marks the shared floor.</small></p>
+    </div>
+  </section>
+  <div class="exports"><a download href="sprites/drift/drift-complete.png">Download complete transparent sheet</a><a href="sprites/drift/generation-prompts.md">Generation prompts</a></div>
+  <section class="pages" aria-label="Atlas pages">
+    <a href="sprites/drift/movement.png" download><img src="sprites/drift/movement.png" alt="Idle, walk, retreat, crouch, block and intro sprites"><span>Movement / guard</span></a>
+    <a href="sprites/drift/attacks.png" download><img src="sprites/drift/attacks.png" alt="Pickaxe jabs, hooks, rising strikes, chops and tether sprites"><span>Pickaxe attacks</span></a>
+    <a href="sprites/drift/kicks-falls.png" download><img src="sprites/drift/kicks-falls.png" alt="Kicks, finisher and falling reaction sprites"><span>Kicks / knockdowns</span></a>
+    <a href="sprites/drift/reactions.png" download><img src="sprites/drift/reactions.png" alt="Punch, kick, slash and spear reaction sprites"><span>Hit reactions</span></a>
+  </section>
+</main>
+<script type="module">
+  import { DRIFT_ANIMATIONS } from './drift-fighter.js';
+  const canvas=document.querySelector('#preview'), ctx=canvas.getContext('2d');
+  const select=document.querySelector('#animation'), slider=document.querySelector('#frame');
+  const images=new Map(), feet=new Map();
+  let playing=true, mirrored=false, time=0, last=performance.now();
+  for(const key of Object.keys(DRIFT_ANIMATIONS)){
+    const option=document.createElement('option');option.value=key;option.textContent=key.slice(6).replace(/([A-Z])/g,' $1');select.append(option);
+  }
+  for(const src of new Set(Object.values(DRIFT_ANIMATIONS).map(a=>a.sheets[0].src))){
+    const image=new Image();image.src=src;await image.decode();images.set(src,image);
+    const work=document.createElement('canvas');work.width=image.width;work.height=image.height;
+    const context=work.getContext('2d');context.drawImage(image,0,0);
+    const pixels=context.getImageData(0,0,work.width,work.height).data;
+    feet.set(src,Array.from({length:24},(_,cell)=>{
+      let bottom=246;for(let y=150;y<256;y++){let solid=0;for(let x=12;x<244;x++)if(pixels[((Math.floor(cell/4)*256+y)*work.width+(cell%4)*256+x)*4+3]>220)solid++;if(solid>=8)bottom=y;}return bottom;
+    }));
+  }
+  const playButton=document.querySelector('#play');
+  function setPlaying(value){playing=value;playButton.textContent=value?'Pause animation':'Play animation';playButton.setAttribute('aria-pressed',String(value));}
+  select.addEventListener('change',()=>{time=0;slider.max=DRIFT_ANIMATIONS[select.value].frameCount-1;});
+  playButton.addEventListener('click',()=>setPlaying(!playing));
+  document.querySelector('#direction').addEventListener('click',event=>{mirrored=!mirrored;event.currentTarget.textContent=`Facing ${mirrored?'left':'right'} · flip`;event.currentTarget.setAttribute('aria-pressed',String(mirrored));});
+  slider.addEventListener('input',()=>{setPlaying(false);time=Number(slider.value)/DRIFT_ANIMATIONS[select.value].frameRate;});
+  function draw(now){
+    const a=DRIFT_ANIMATIONS[select.value];
+    if(playing)time=(time+Math.min((now-last)/1000,0.05)*Number(document.querySelector('#speed').value))%a.duration;
+    last=now;const frame=Math.min(a.frameCount-1,Math.floor(time*a.frameRate)),cell=a.cells[frame],src=a.sheets[0].src;
+    ctx.clearRect(0,0,360,430);ctx.save();if(mirrored){ctx.translate(360,0);ctx.scale(-1,1);}
+    ctx.drawImage(images.get(src),(cell%4)*256,Math.floor(cell/4)*256,256,256,0,418-feet.get(src)[cell]/256*360,360,360);ctx.restore();
+    slider.max=a.frameCount-1;slider.value=frame;
+    document.querySelector('#status').textContent=`Frame ${frame+1} / ${a.frameCount} · ${a.duration.toFixed(2)} seconds`;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+</script>
+</body>
+</html>
